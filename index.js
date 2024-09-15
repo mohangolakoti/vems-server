@@ -181,7 +181,7 @@ async function appendDataToFile(data, filePath) {
   }
 }
 
-initializeInitialEnergyValue();
+setInterval(initializeInitialEnergyValue, 60000);
 setInterval(fetchDataAndStore, 60000);
 
 app.listen(port, () => {
