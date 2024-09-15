@@ -121,43 +121,52 @@ const sensorData = async (req, res) => {
       const yesterday = format(new Date(Date.now() - 86400000), 'yyyy-MM-dd');
       const today = format(new Date(), 'yyyy-MM-dd');
   
-      // SQL query for fetching the last record of the previous day for 70 meters
+      // Queries to get the most recent records for each meter
       const previousDayQuery = `
-        SELECT ${Array.from({ length: 70 }, (_, i) => `TotalNet_KWH_meter_${i + 1}`).join(", ")} 
+        SELECT 
+          TotalNet_KWH_meter_70, TotalNet_KWH_meter_40, TotalNet_KWH_meter_69, TotalNet_KWH_meter_41 
         FROM sensordata 
         WHERE DATE(timestamp) = ? 
         ORDER BY timestamp DESC 
         LIMIT 1
       `;
   
-      // SQL query for fetching the first record of the current day for 70 meters
       const todayFirstRecordQuery = `
-        SELECT ${Array.from({ length: 70 }, (_, i) => `TotalNet_KWH_meter_${i + 1}`).join(", ")} 
+        SELECT 
+          TotalNet_KWH_meter_70, TotalNet_KWH_meter_40, TotalNet_KWH_meter_69, TotalNet_KWH_meter_41 
         FROM sensordata 
         WHERE DATE(timestamp) = ? 
         ORDER BY timestamp ASC 
         LIMIT 1
       `;
   
-      // Initialize array to store initial energy values for 70 meters
-      const initialEnergyValues = Array(70).fill(null);
-  
-      // Fetch the last record of the previous day
+      // Fetch data from previous day
       const [previousDayRows] = await connection.execute(previousDayQuery, [yesterday]);
+      let initialEnergyValues = {
+        meter_70: null,
+        meter_40: null,
+        meter_69: null,
+        meter_41: null,
+      };
+  
       if (previousDayRows.length > 0) {
-        // Store the previous day's last energy values
-        for (let i = 0; i < 70; i++) {
-          initialEnergyValues[i] = previousDayRows[0][`TotalNet_KWH_meter_${i + 1}`];
-        }
-        console.log("Initial energy values stored from the previous day:", initialEnergyValues);
+        initialEnergyValues = {
+          meter_70: previousDayRows[0].TotalNet_KWH_meter_70 || null,
+          meter_40: previousDayRows[0].TotalNet_KWH_meter_40 || null,
+          meter_69: previousDayRows[0].TotalNet_KWH_meter_69 || null,
+          meter_41: previousDayRows[0].TotalNet_KWH_meter_41 || null,
+        };
+        console.log("Initial energy values from previous day:", initialEnergyValues);
       } else {
         console.log("No data found for the previous day. Fetching today's first record.");
-        // If no previous day's data, fetch today's first record
         const [todayRows] = await connection.execute(todayFirstRecordQuery, [today]);
         if (todayRows.length > 0) {
-          for (let i = 0; i < 70; i++) {
-            initialEnergyValues[i] = todayRows[0][`TotalNet_KWH_meter_${i + 1}`];
-          }
+          initialEnergyValues = {
+            meter_70: todayRows[0].TotalNet_KWH_meter_70 || null,
+            meter_40: todayRows[0].TotalNet_KWH_meter_40 || null,
+            meter_69: todayRows[0].TotalNet_KWH_meter_69 || null,
+            meter_41: todayRows[0].TotalNet_KWH_meter_41 || null,
+          };
           console.log("Initial energy values set to today's first record:", initialEnergyValues);
         } else {
           console.log("No data found for today yet.");
@@ -166,7 +175,6 @@ const sensorData = async (req, res) => {
   
       await connection.end();
   
-      // Return the initial energy values as a response
       res.status(200).json({ initialEnergyValues });
     } catch (error) {
       console.error("Error fetching previous day's energy values:", error);

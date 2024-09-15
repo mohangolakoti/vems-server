@@ -7,17 +7,17 @@ const fs = require("fs");
 const path = require("path");
 const { format } = require('date-fns');
 const router = require('./Routes/route');
-const dotEnv = require('dotenv');
+const dotEnv = require('dotenv')
 const app = express();
-dotEnv.config();
+dotEnv.config()
 
 app.use(cors());
 app.use(bodyParser.json());
 
 const port = process.env.PORT || 8080;
 
-let initialEnergyValues = Array(70).fill(null);
-let firstStoredEnergyValues = Array(70).fill(null);
+let initialEnergyValue = null;
+let firstStoredEnergyValue = null;
 let isFirstDataStoredToday = false;
 
 const config = {
@@ -25,29 +25,28 @@ const config = {
   user: process.env.user,
   password: process.env.password,
   database: process.env.database,
+  port:process.env.port
 };
 
 // Routes are coming from Routes folder route.js
 app.use('/api', router);
 
-async function initializeInitialEnergyValues() {
+async function initializeInitialEnergyValue() {
   try {
-    console.log("Initializing initial energy values...");
+    console.log("Initializing initial energy value...");
     const connection = await mysql.createConnection(config);
 
     const yesterday = format(new Date(Date.now() - 86400000), 'yyyy-MM-dd');
     const today = format(new Date(), 'yyyy-MM-dd');
-    
     const previousDayQuery = `
-      SELECT ${Array.from({ length: 70 }, (_, i) => `TotalNet_KWH_meter_${i + 1}`).join(", ")} 
+      SELECT TotalNet_KWH_meter_70, TotalNet_KWH_meter_40, TotalNet_KWH_meter_69, TotalNet_KWH_meter_41 
       FROM sensordata 
       WHERE DATE(timestamp) = ? 
       ORDER BY timestamp DESC 
       LIMIT 1
     `;
-    
     const todayFirstRecordQuery = `
-      SELECT ${Array.from({ length: 70 }, (_, i) => `TotalNet_KWH_meter_${i + 1}`).join(", ")} 
+      SELECT TotalNet_KWH_meter_70, TotalNet_KWH_meter_40, TotalNet_KWH_meter_69, TotalNet_KWH_meter_41 
       FROM sensordata 
       WHERE DATE(timestamp) = ? 
       ORDER BY timestamp ASC 
@@ -56,18 +55,24 @@ async function initializeInitialEnergyValues() {
 
     const [previousDayRows] = await connection.execute(previousDayQuery, [yesterday]);
     if (previousDayRows.length > 0) {
-      for (let i = 0; i < 70; i++) {
-        initialEnergyValues[i] = previousDayRows[0][`TotalNet_KWH_meter_${i + 1}`];
-      }
-      console.log("Initial energy values stored from the previous day:", initialEnergyValues);
+      initialEnergyValue = {
+        meter70: previousDayRows[0].TotalNet_KWH_meter_70,
+        meter40: previousDayRows[0].TotalNet_KWH_meter_40,
+        meter69: previousDayRows[0].TotalNet_KWH_meter_69,
+        meter41: previousDayRows[0].TotalNet_KWH_meter_41,
+      };
+      console.log("Initial energy value stored from previous day:", initialEnergyValue);
     } else {
       console.log("No data found for the previous day. Fetching today's first record.");
       const [todayRows] = await connection.execute(todayFirstRecordQuery, [today]);
       if (todayRows.length > 0) {
-        for (let i = 0; i < 70; i++) {
-          initialEnergyValues[i] = todayRows[0][`TotalNet_KWH_meter_${i + 1}`];
-        }
-        console.log("Initial energy values set to today's first record:", initialEnergyValues);
+        initialEnergyValue = {
+          meter70: todayRows[0].TotalNet_KWH_meter_70,
+          meter40: todayRows[0].TotalNet_KWH_meter_40,
+          meter69: todayRows[0].TotalNet_KWH_meter_69,
+          meter41: todayRows[0].TotalNet_KWH_meter_41,
+        };
+        console.log("Initial energy value set to today's first record:", initialEnergyValue);
       } else {
         console.log("No data found for today yet.");
       }
@@ -75,68 +80,79 @@ async function initializeInitialEnergyValues() {
 
     await connection.end();
   } catch (error) {
-    console.error("Error initializing initial energy values:", error);
+    console.error("Error initializing initial energy value:", error);
   }
 }
 
 async function fetchDataAndStore() {
   try {
     console.log("Fetching and storing sensor data...");
-    const response = await axios.get(`${process.env.API_URL}`);
+    const response = await axios.get("https://vems-api.onrender.com/api/sensordata");
     const newData = response.data[0];
 
-    const energyConsumptions = Array(70).fill(null);
-    for (let i = 0; i < 70; i++) {
-      if (initialEnergyValues[i] === null) {
-        initialEnergyValues[i] = newData[`TotalNet_KWH_meter_${i + 1}`];
-        console.log(`Setting initial energy value for meter ${i + 1} to the current value:`, initialEnergyValues[i]);
-      }
-      energyConsumptions[i] = newData[`TotalNet_KWH_meter_${i + 1}`] - initialEnergyValues[i];
+    if (initialEnergyValue === null) {
+      initialEnergyValue = {
+        meter70: newData.TotalNet_KWH_meter_70,
+        meter40: newData.TotalNet_KWH_meter_40,
+        meter69: newData.TotalNet_KWH_meter_69,
+        meter41: newData.TotalNet_KWH_meter_41,
+      };
+      console.log("Setting initial energy value to the current value:", initialEnergyValue);
     }
 
-    // Generate IST timestamp
-    const now = new Date();
-    const istOffset = 5.5 * 60 * 60 * 1000; // IST offset in milliseconds
-    const istTimestamp = new Date(now.getTime() + istOffset).toISOString().slice(0, 19).replace('T', ' ');
+    const energyConsumption = {
+      meter70: newData.TotalNet_KWH_meter_70 - initialEnergyValue.meter70,
+      meter40: newData.TotalNet_KWH_meter_40 - initialEnergyValue.meter40,
+      meter69: newData.TotalNet_KWH_meter_69 - initialEnergyValue.meter69,
+      meter41: newData.TotalNet_KWH_meter_41 - initialEnergyValue.meter41,
+    };
+
+    const todayDate = format(new Date(), 'yyyy-MM-dd');
 
     const query = `
-      INSERT INTO sensordata (
-        timestamp, 
-        ${Array.from({ length: 70 }, (_, i) => `Total_KW_meter_${i + 1}, Total_KVA_meter_${i + 1}, Avg_PF_meter_${i + 1}, TotalNet_KWH_meter_${i + 1}, TotalNet_KVAH_meter_${i + 1}, energy_consumption_m${i + 1}`).join(", ")}
-      ) 
-      VALUES (
-        ?, 
-        ${Array.from({ length: 70 }, () => "?").join(", ")},
-        ${Array.from({ length: 70 }, () => "?").join(", ")},
-        ${Array.from({ length: 70 }, () => "?").join(", ")},
-        ${Array.from({ length: 70 }, () => "?").join(", ")},
-        ${Array.from({ length: 70 }, () => "?").join(", ")}
-      )
+      INSERT INTO sensordata (timestamp, 
+        Total_KW_meter_70, TotalNet_KWH_meter_70, Total_KVA_meter_70, Avg_PF_meter_70, TotalNet_KVAH_meter_70, 
+        Total_KW_meter_40, TotalNet_KWH_meter_40, Total_KVA_meter_40, Avg_PF_meter_40, TotalNet_KVAH_meter_40, 
+        Total_KW_meter_69, TotalNet_KWH_meter_69, Total_KVA_meter_69, Avg_PF_meter_69, TotalNet_KVAH_meter_69, 
+        Total_KW_meter_41, TotalNet_KWH_meter_41, Total_KVA_meter_41, Avg_PF_meter_41, TotalNet_KVAH_meter_41, 
+        energy_consumption_meter_70, energy_consumption_meter_40, energy_consumption_meter_69, energy_consumption_meter_41) 
+      VALUES (NOW(), 
+        ?, ?, ?, ?, ?, 
+        ?, ?, ?, ?, ?, 
+        ?, ?, ?, ?, ?, 
+        ?, ?, ?, ?, ?, 
+        ?, ?, ?, ?)
     `;
-    
-    const values = Array.from({ length: 70 }, (_, i) => [
-      newData[`Total_KW_meter_${i + 1}`],
-      newData[`Total_KVA_meter_${i + 1}`],
-      newData[`Avg_PF_meter_${i + 1}`],
-      newData[`TotalNet_KWH_meter_${i + 1}`],
-      newData[`TotalNet_KVAH_meter_${i + 1}`],
-      energyConsumptions[i]
-    ]).flat();
+    const values = [
+      newData.Total_KW_meter_70, newData.TotalNet_KWH_meter_70, newData.Total_KVA_meter_70, newData.Avg_PF_meter_70, newData.TotalNet_KVAH_meter_70,
+      newData.Total_KW_meter_40, newData.TotalNet_KWH_meter_40, newData.Total_KVA_meter_40, newData.Avg_PF_meter_40, newData.TotalNet_KVAH_meter_40,
+      newData.Total_KW_meter_69, newData.TotalNet_KWH_meter_69, newData.Total_KVA_meter_69, newData.Avg_PF_meter_69, newData.TotalNet_KVAH_meter_69,
+      newData.Total_KW_meter_41, newData.TotalNet_KWH_meter_41, newData.Total_KVA_meter_41, newData.Avg_PF_meter_41, newData.TotalNet_KVAH_meter_41,
+      energyConsumption.meter70,
+      energyConsumption.meter40,
+      energyConsumption.meter69,
+      energyConsumption.meter41
+    ];
 
     console.log("Executing query:", query);
-    console.log("With values:", [istTimestamp, ...values]);
+    console.log("With values:", values);
 
     const connection = await mysql.createConnection(config);
-    const [result] = await connection.query(query, [istTimestamp, ...values]);
+    const [result] = await connection.query(query, values);
     await connection.end();
 
     console.log("Sensor data stored successfully:", newData);
     console.log("Database insert result:", result);
 
     if (!isFirstDataStoredToday) {
-      firstStoredEnergyValues = initialEnergyValues.slice();
+      firstStoredEnergyValue = {
+        meter70: newData.TotalNet_KWH_meter_70,
+        meter40: newData.TotalNet_KWH_meter_40,
+        meter69: newData.TotalNet_KWH_meter_69,
+        meter41: newData.TotalNet_KWH_meter_41,
+      };
       isFirstDataStoredToday = true;
-      console.log("First stored energy values for today:", firstStoredEnergyValues);
+      console.log("First stored energy value for today:", firstStoredEnergyValue);
     }
 
     const currentDate = format(new Date(), 'yyyy-MM-dd');
@@ -147,36 +163,27 @@ async function fetchDataAndStore() {
   } catch (error) {
     console.error("Error fetching and storing sensor data:", error);
   }
-
-  // Call the function recursively with a delay (e.g., every 20 minutes)
-  // setTimeout(fetchDataAndStore, 20 * 60000);
 }
 
-function formatSensorData(data) {
-  const dateTime = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
-  const formattedData = `${dateTime},${Array.from({ length: 70 }, (_, i) => data[`TotalNet_KWH_meter_${i + 1}`]).join(",")}\n`;
-  return formattedData;
+async function appendDataToFile(data, filePath) {
+  try {
+    console.log("Appending data to file:", filePath);
+    const fileContent = `${format(new Date(), 'yyyy-MM-dd HH:mm:ss')},${data.Total_KW_meter_70},${data.TotalNet_KWH_meter_70},${data.Total_KVA_meter_70},${data.Avg_PF_meter_70},${data.TotalNet_KVAH_meter_70},${data.Total_KW_meter_40},${data.TotalNet_KWH_meter_40},${data.Total_KVA_meter_40},${data.Avg_PF_meter_40},${data.TotalNet_KVAH_meter_40},${data.Total_KW_meter_69},${data.TotalNet_KWH_meter_69},${data.Total_KVA_meter_69},${data.Avg_PF_meter_69},${data.TotalNet_KVAH_meter_69},${data.Total_KW_meter_41},${data.TotalNet_KWH_meter_41},${data.Total_KVA_meter_41},${data.Avg_PF_meter_41},${data.TotalNet_KVAH_meter_41}\n`;
+    fs.appendFile(filePath, fileContent, (error) => {
+      if (error) {
+        console.error("Error appending data to file:", error);
+      } else {
+        console.log("Data appended to file successfully:", filePath);
+      }
+    });
+  } catch (error) {
+    console.error("Error appending data to file:", error);
+  }
 }
 
-function appendDataToFile(data, filePath) {
-  const formattedData = formatSensorData(data);
-
-  fs.appendFile(filePath, formattedData, { flag: 'a+' }, (err) => {
-    if (err) {
-      console.error("Error appending data to file:", err);
-    } else {
-      console.log("Data appended to file successfully.");
-    }
-  });
-}
-
-initializeInitialEnergyValues().then(() => {
-  // Schedule fetchDataAndStore to run every 20 minutes
-  setInterval(fetchDataAndStore, 60000);
-  // Schedule initializeInitialEnergyValues to run every 24 hours
-  setInterval(initializeInitialEnergyValues, 60000);
-});
+initializeInitialEnergyValue();
+setInterval(fetchDataAndStore, 60000);
 
 app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
+  console.log(`Server started on port ${port}`);
 });
