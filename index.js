@@ -141,7 +141,7 @@ async function fetchDataAndStore() {
     const [result] = await connection.query(query, values);
     await connection.end();
 
-    console.log("Sensor data stored successfully:", newData);
+    //console.log("Sensor data stored successfully:", newData);
     console.log("Database insert result:", result);
 
     if (!isFirstDataStoredToday) {

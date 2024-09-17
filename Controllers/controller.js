@@ -3,7 +3,7 @@ const bodyParser = require("body-parser");
 const cors = require("cors");
 const mysql = require("mysql2/promise");
 const app = express();
-const { format,subDays, startOfDay, endOfDay } = require('date-fns');
+const { format,subDays, startOfDay, endOfDay, addSeconds } = require('date-fns');
 const dotEnv = require('dotenv')
 dotEnv.config()
 app.use(cors());
@@ -95,11 +95,21 @@ const sensorData = async (req, res) => {
     }
   };
   
-    const dailyWiseGraph = async (req, res) => {
+  const dailyWiseGraph = async (req, res) => {
     const date = req.params.date;
-    const start = format(startOfDay(new Date(date)), 'yyyy-MM-dd HH:mm:ss');
-    const end = format(endOfDay(new Date(date)), 'yyyy-MM-dd HH:mm:ss');
-  
+
+    // Convert to IST by adding 5 hours 30 minutes (19800 seconds) to the start and end of the day
+    const startUTC = startOfDay(new Date(date));
+    const endUTC = endOfDay(new Date(date));
+    
+    // Add the IST offset to convert UTC to IST
+    const startIST = addSeconds(startUTC, 19800); // 5 hours 30 minutes = 19800 seconds
+    const endIST = addSeconds(endUTC, 19800);
+
+    // Format the dates for MySQL query in 'yyyy-MM-dd HH:mm:ss' format
+    const start = format(startIST, 'yyyy-MM-dd HH:mm:ss');
+    const end = format(endIST, 'yyyy-MM-dd HH:mm:ss');
+
     try {
       const connection = await mysql.createConnection(config);
       const [rows] = await connection.query(
@@ -112,7 +122,7 @@ const sensorData = async (req, res) => {
       console.error('Error fetching power data:', error);
       res.status(500).send('Error fetching power data');
     }
-  };
+};
 
 
   const prevDayEnergy = async (req, res) => {
@@ -181,10 +191,46 @@ const sensorData = async (req, res) => {
       res.status(500).json({ error: "Internal Server Error" });
     }
   };
+
+  const getHighestKva = async (req, res) => {
+    try {
+      const connection = await mysql.createConnection(config);
+  
+      // Query to get the highest sum of KVA for today
+      const todayQuery = `
+        SELECT MAX(Total_KVA_meter_70 + Total_KVA_meter_40 + Total_KVA_meter_69) as highest_kva_today 
+        FROM sensordata 
+        WHERE DATE(timestamp) = CURDATE()
+      `;
+  
+      // Query to get the highest sum of KVA for this month
+      const monthQuery = `
+        SELECT MAX(Total_KVA_meter_70 + Total_KVA_meter_40 + Total_KVA_meter_69) as highest_kva_month 
+        FROM sensordata 
+        WHERE YEAR(timestamp) = YEAR(CURDATE()) 
+        AND MONTH(timestamp) = MONTH(CURDATE())
+      `;
+  
+      // Execute both queries in parallel
+      const [todayResult, monthResult] = await Promise.all([
+        connection.query(todayQuery),
+        connection.query(monthQuery)
+      ]);
+  
+      // todayResult[0] and monthResult[0] contain the actual query result
+      const highestKvaToday = todayResult[0][0]?.highest_kva_today || 0;
+      const highestKvaMonth = monthResult[0][0]?.highest_kva_month || 0;
+  
+      // Return the results as JSON
+      return res.status(200).json({
+        highestKvaToday,
+        highestKvaMonth
+      });
+    } catch (error) {
+      console.error('Error fetching highest KVA values:', error);
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  };
   
 
-
-
-
-
-module.exports={sensorData,realTimeGraph,dailyWiseGraph,prevDayEnergy,energyConsumption};
+module.exports={sensorData,realTimeGraph,dailyWiseGraph,prevDayEnergy,energyConsumption,getHighestKva};
