@@ -231,6 +231,41 @@ const sensorData = async (req, res) => {
       return res.status(500).json({ error: 'Internal server error' });
     }
   };
+
+  const sensorDataByDate = async (req, res) => {
+    const { date } = req.params; // Extract date from query parameters
+  
+    try {
+      const connection = await mysql.createConnection(config);
+  
+      const query = `
+        SELECT id, timestamp, 
+            Total_KW_meter_70, TotalNet_KWH_meter_70, Total_KVA_meter_70, Avg_PF_meter_70, TotalNet_KVAH_meter_70,
+            Total_KW_meter_40, TotalNet_KWH_meter_40, Total_KVA_meter_40, Avg_PF_meter_40, TotalNet_KVAH_meter_40,
+            Total_KW_meter_69, TotalNet_KWH_meter_69, Total_KVA_meter_69, Avg_PF_meter_69, TotalNet_KVAH_meter_69,
+            Total_KW_meter_41, TotalNet_KWH_meter_41, Total_KVA_meter_41, Avg_PF_meter_41, TotalNet_KVAH_meter_41,
+            energy_consumption_meter_70, energy_consumption_meter_40, energy_consumption_meter_69, energy_consumption_meter_41
+        FROM sensordata
+        WHERE DATE(timestamp) = ?
+      `;
+  
+      // Execute query with the provided date
+      const [rows] = await connection.execute(query, [date]);
+  
+      await connection.end();
+  
+      // If no data found, return an empty array or a specific message
+      if (rows.length === 0) {
+        return res.status(404).json({ message: "No data found for the selected date." });
+      }
+  
+      // Return the retrieved data
+      res.json(rows);
+    } catch (error) {
+      console.error('Error fetching sensor data:', error);
+      res.status(500).json({ error: "Error fetching sensor data" });
+    }
+  };
   
 
-module.exports={sensorData,realTimeGraph,dailyWiseGraph,prevDayEnergy,energyConsumption,getHighestKva};
+module.exports={sensorData,realTimeGraph,dailyWiseGraph,prevDayEnergy,energyConsumption,getHighestKva,sensorDataByDate};
